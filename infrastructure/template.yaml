@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SpendWise - Personal Finance Tracker on AWS Serverless
+  Architecture: S3 (Frontend) -> API Gateway -> Lambda (Node.js 20.x) -> DynamoDB + Cognito Auth
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: Deployment stage environment name
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: Allowed CORS Origin (e.g. S3 website domain or localhost during development)
+
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 256
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        TRANSACTIONS_TABLE: !Ref TransactionsTable
+        BUDGETS_TABLE: !Ref BudgetsTable
+        ALLOWED_ORIGIN: !Ref AllowedOrigin
+
+Resources:
+  # ===================================================================
+  # 1. Amazon Cognito - User Authentication & Identity
+  # ===================================================================
+  SpendWiseUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub spendwise-userpool-${Stage}
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+      Schema:
+        - AttributeDataType: String
+          Name: email
+          Required: true
+          Mutable: true
+        - AttributeDataType: String
+          Name: name
+          Required: false
+          Mutable: true
+
+  SpendWiseUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub spendwise-web-client-${Stage}
+      UserPoolId: !Ref SpendWiseUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+  # ===================================================================
+  # 2. Amazon DynamoDB - Persistent NoSQL Storage
+  # ===================================================================
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub spendwise-transactions-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: transactionId
+          AttributeType: S
+        - AttributeName: transactionDate
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: transactionId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: DateIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: transactionDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  BudgetsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub spendwise-budgets-${Stage}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: monthCategory
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: monthCategory
+          KeyType: RANGE
+
+  # ===================================================================
+  # 3. Amazon API Gateway - REST API with Cognito Authorizer
+  # ===================================================================
+  SpendWiseApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Stage
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,x-user-id'"
+        AllowOrigin: !Sub "'${AllowedOrigin}'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt SpendWiseUserPool.Arn
+            Identity:
+              Header: Authorization
+        AddDefaultAuthorizerToCorsPreflight: false
+
+  # ===================================================================
+  # 4. AWS Lambda - Serverless Application Logic
+  # ===================================================================
+  SpendWiseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend
+      Handler: src/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TransactionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BudgetsTable
+      Events:
+        # Public health check
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+        # Transactions
+        ListTransactions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /transactions
+            Method: GET
+
+        CreateTransaction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /transactions
+            Method: POST
+
+        GetTransaction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /transactions/{id}
+            Method: GET
+
+        UpdateTransaction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /transactions/{id}
+            Method: PUT
+
+        DeleteTransaction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /transactions/{id}
+            Method: DELETE
+
+        # Budgets
+        ListBudgets:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /budgets
+            Method: GET
+
+        SetBudget:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /budgets
+            Method: POST
+
+        DeleteBudget:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /budgets/{month}/{category}
+            Method: DELETE
+
+        # Analytics
+        GetAnalytics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpendWiseApi
+            Path: /analytics
+            Method: GET
+
+  # ===================================================================
+  # 5. Amazon S3 - Frontend Web Hosting
+  # ===================================================================
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub spendwise-frontend-${Stage}-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${FrontendBucket}/*
+
+Outputs:
+  ApiEndpoint:
+    Description: Base API Gateway endpoint URL for SpendWise REST API
+    Value: !Sub https://${SpendWiseApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID for client authentication
+    Value: !Ref SpendWiseUserPool
+
+  CognitoClientId:
+    Description: Cognito App Client ID for React web client
+    Value: !Ref SpendWiseUserPoolClient
+
+  TransactionsTableName:
+    Description: DynamoDB Table for personal transactions
+    Value: !Ref TransactionsTable
+
+  BudgetsTableName:
+    Description: DynamoDB Table for monthly category budgets
+    Value: !Ref BudgetsTable
+
+  FrontendWebsiteURL:
+    Description: S3 Static Website Hosting URL for SpendWise Frontend
+    Value: !GetAtt FrontendBucket.WebsiteURL
