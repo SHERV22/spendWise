@@ -69,6 +69,31 @@ async function callCognitoIdp(action, payload) {
 }
 
 // -------------------------------------------------------------
+// JWT Expiration & Validation Utility
+// -------------------------------------------------------------
+export function isTokenExpired(token) {
+  if (!token) return true;
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return true;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    const payload = JSON.parse(jsonPayload);
+    if (!payload.exp) return false;
+    // Check if expired or expiring within 30 seconds
+    return payload.exp * 1000 <= Date.now() + 30000;
+  } catch {
+    return true;
+  }
+}
+
+// -------------------------------------------------------------
 // Auth Actions (Cognito + Demo Fallback)
 // -------------------------------------------------------------
 
@@ -77,11 +102,20 @@ export function getCurrentUser() {
     const raw = localStorage.getItem(AUTH_STORAGE_KEYS.USER);
     if (!raw) return isAwsConfigured() ? null : DEMO_USER;
     const user = JSON.parse(raw);
-    // When AWS is configured, clear any legacy demo session
-    if (isAwsConfigured() && user?.isDemo) {
-      localStorage.removeItem(AUTH_STORAGE_KEYS.USER);
-      localStorage.removeItem(AUTH_STORAGE_KEYS.TOKEN);
-      return null;
+
+    // When AWS is configured, clear any legacy demo session or session with an expired token
+    if (isAwsConfigured()) {
+      if (user?.isDemo) {
+        localStorage.removeItem(AUTH_STORAGE_KEYS.USER);
+        localStorage.removeItem(AUTH_STORAGE_KEYS.TOKEN);
+        return null;
+      }
+      const token = localStorage.getItem(AUTH_STORAGE_KEYS.TOKEN);
+      if (!token || isTokenExpired(token)) {
+        localStorage.removeItem(AUTH_STORAGE_KEYS.USER);
+        localStorage.removeItem(AUTH_STORAGE_KEYS.TOKEN);
+        return null;
+      }
     }
     return user;
   } catch {
@@ -90,7 +124,14 @@ export function getCurrentUser() {
 }
 
 export function getAuthToken() {
-  return localStorage.getItem(AUTH_STORAGE_KEYS.TOKEN) || null;
+  const token = localStorage.getItem(AUTH_STORAGE_KEYS.TOKEN);
+  if (!token) return null;
+  if (isTokenExpired(token)) {
+    localStorage.removeItem(AUTH_STORAGE_KEYS.TOKEN);
+    localStorage.removeItem(AUTH_STORAGE_KEYS.USER);
+    return null;
+  }
+  return token;
 }
 
 export function setSession(user, token) {

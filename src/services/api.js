@@ -2,7 +2,7 @@
 // Manages requests to AWS API Gateway in Cloud Mode or Local Storage in Demo Mode.
 // Maintains a strict boundary: AWS mode NEVER silently falls back to mock data on network errors.
 
-import { getAwsConfig, isAwsConfigured, getAuthToken, getCurrentUser } from './auth.js';
+import { getAwsConfig, isAwsConfigured, getAuthToken, getCurrentUser, signOut } from './auth.js';
 import {
   loadDemoTransactions,
   saveDemoTransactions,
@@ -21,22 +21,38 @@ export function isCloudModeActive() {
 async function callAwsApi(path, options = {}) {
   const { apiEndpoint } = getAwsConfig();
   if (!apiEndpoint) {
-    throw new Error('API Gateway endpoint is not configured in Settings.');
+    throw new Error('API Gateway endpoint is not configured.');
   }
 
   const token = getAuthToken();
+  if (!token) {
+    throw new Error('Session expired. Please sign in again.');
+  }
+
   const url = `${apiEndpoint.replace(/\/+$/, '')}${path}`;
 
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    Authorization: `Bearer ${token}`,
     ...options.headers,
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers,
+    });
+  } catch (err) {
+    console.warn('Network or CORS error on AWS API call:', err);
+    signOut();
+    throw new Error('Session expired or network error. Please sign in again.');
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    signOut();
+    throw new Error('Session expired. Please sign in again.');
+  }
 
   const data = await response.json().catch(() => ({}));
 

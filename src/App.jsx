@@ -22,7 +22,7 @@ import {
   fetchAnalytics,
   isCloudModeActive,
 } from './services/api.js';
-import { getCurrentUser, signOut } from './services/auth.js';
+import { getCurrentUser, getAuthToken, signOut } from './services/auth.js';
 import { getCurrentMonthString } from './services/formatters.js';
 
 function App() {
@@ -50,6 +50,24 @@ function App() {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
+      // In AWS Cloud mode without an authenticated token, load initial blank state without network error
+      if (isCloudModeActive() && !getAuthToken()) {
+        setTransactions([]);
+        setBudgets([]);
+        setAnalytics({
+          month: selectedMonth,
+          totalIncomeInPaise: 0,
+          totalExpenseInPaise: 0,
+          netBalanceInPaise: 0,
+          savingsRate: 0,
+          transactionCount: 0,
+          categoryBreakdown: [],
+          monthlyTrend: [],
+          topExpenses: [],
+        });
+        return;
+      }
+
       const [txList, budgetList, analyticsData] = await Promise.all([
         fetchTransactions(),
         fetchBudgets(selectedMonth),
@@ -61,7 +79,9 @@ function App() {
       setAnalytics(analyticsData || null);
     } catch (err) {
       console.error('Failed to load SpendWise data:', err);
-      showToast(err.message || 'Error loading records', 'error');
+      if (err.message && !err.message.includes('Session expired')) {
+        showToast(err.message || 'Error loading records', 'error');
+      }
     } finally {
       setIsLoading(false);
     }
