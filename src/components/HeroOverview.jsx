@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Calendar,
   ShieldCheck,
+  IndianRupee,
 } from 'lucide-react';
 import { formatINR, formatMonthName, getCurrentMonthString } from '../services/formatters.js';
 import { isCloudModeActive } from '../services/api.js';
@@ -120,7 +121,7 @@ export default function HeroOverview({
           <div className="hero-header-action desktop-only">
             <div className="orbit-portrait-wrapper">
               <div className="orbit-portrait">
-                <ShieldCheck size={28} className="portrait-icon" />
+                <IndianRupee size={28} className="portrait-icon" />
               </div>
               <button
                 type="button"
