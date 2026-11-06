@@ -116,6 +116,28 @@ export function getCurrentUser() {
         localStorage.removeItem(AUTH_STORAGE_KEYS.TOKEN);
         return null;
       }
+
+      // Populate user's real name/username from Cognito ID token claims if available
+      try {
+        const parts = token.split('.');
+        if (parts.length >= 2) {
+          const base64Url = parts[1];
+          const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+          const payload = JSON.parse(decodeURIComponent(
+            atob(base64)
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          ));
+          const realName = payload.name || payload.preferred_username;
+          if (realName && user.name !== realName) {
+            user.name = realName;
+            localStorage.setItem(AUTH_STORAGE_KEYS.USER, JSON.stringify(user));
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
     return user;
   } catch {
@@ -177,10 +199,19 @@ export async function signIn(email, password, useDemoMode = false) {
 
     // Decode payload claims safely
     let sub = '';
+    let realName = '';
     try {
       const parts = idToken.split('.');
-      const payload = JSON.parse(atob(parts[1]));
-      sub = payload.sub;
+      const base64Url = parts[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      ));
+      sub = payload.sub || email;
+      realName = payload.name || payload.preferred_username || '';
     } catch {
       sub = email;
     }
@@ -188,7 +219,7 @@ export async function signIn(email, password, useDemoMode = false) {
     const user = {
       id: sub,
       email,
-      name: email.split('@')[0],
+      name: realName || email.split('@')[0],
       isDemo: false,
     };
 
