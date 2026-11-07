@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   Wallet,
-  Plus,
   Layers,
   Receipt,
   PieChart,
@@ -50,7 +49,6 @@ export default function Navbar({
             <span className="circle circle-amber" />
           </div>
           <span className="brand-name">SpendWise</span>
-          <span className="brand-tag">AWS Cloud</span>
         </div>
 
         {/* Desktop Navigation Links */}
@@ -93,17 +91,6 @@ export default function Navbar({
                 <span className="mode-text">Demo Mode</span>
               </>
             )}
-          </button>
-
-          {/* Quick Add Transaction Button */}
-          <button
-            type="button"
-            className="btn-primary btn-add-quick"
-            onClick={onOpenAddModal}
-            title="Record a new transaction"
-          >
-            <Plus size={16} />
-            <span className="desktop-only">Add</span>
           </button>
 
           {/* Auth Menu / Button */}
