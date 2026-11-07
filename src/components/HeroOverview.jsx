@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -11,6 +11,8 @@ import {
   Calendar,
   ShieldCheck,
   IndianRupee,
+  Pencil,
+  X,
 } from 'lucide-react';
 import { formatINR, formatMonthName, getCurrentMonthString } from '../services/formatters.js';
 import { isCloudModeActive } from '../services/api.js';
@@ -29,8 +31,46 @@ export default function HeroOverview({
   const netBalance = analytics?.netBalanceInPaise || 0;
   const totalIncome = analytics?.totalIncomeInPaise || 0;
   const totalExpense = analytics?.totalExpenseInPaise || 0;
-  const savingsRate = analytics?.savingsRate || 0;
+  const autoSavingsRate = analytics?.savingsRate || 0;
   const isPositive = netBalance >= 0;
+
+  const [savingsConfig, setSavingsConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('spendwise_savings_config');
+      return saved ? JSON.parse(saved) : { isCustom: false, customRate: '', targetBenchmark: 20 };
+    } catch {
+      return { isCustom: false, customRate: '', targetBenchmark: 20 };
+    }
+  });
+
+  const [savingsModalOpen, setSavingsModalOpen] = useState(false);
+  const [tempIsCustom, setTempIsCustom] = useState(false);
+  const [tempCustomRate, setTempCustomRate] = useState('');
+  const [tempTarget, setTempTarget] = useState('20');
+
+  const displayedRate = savingsConfig.isCustom && savingsConfig.customRate !== ''
+    ? Number(savingsConfig.customRate)
+    : autoSavingsRate;
+  const targetRate = Number(savingsConfig.targetBenchmark) || 20;
+
+  const handleOpenSavingsModal = () => {
+    setTempIsCustom(savingsConfig.isCustom);
+    setTempCustomRate(savingsConfig.customRate ?? '');
+    setTempTarget(String(savingsConfig.targetBenchmark || 20));
+    setSavingsModalOpen(true);
+  };
+
+  const handleSaveSavings = (e) => {
+    e.preventDefault();
+    const newConfig = {
+      isCustom: tempIsCustom,
+      customRate: tempIsCustom ? tempCustomRate : '',
+      targetBenchmark: Math.max(1, Math.min(100, Number(tempTarget) || 20)),
+    };
+    setSavingsConfig(newConfig);
+    localStorage.setItem('spendwise_savings_config', JSON.stringify(newConfig));
+    setSavingsModalOpen(false);
+  };
 
   return (
     <section className="hero-section">
@@ -188,31 +228,158 @@ export default function HeroOverview({
           </div>
 
           {/* 4. Savings Rate Card */}
-          <div className="stat-card">
+          <div
+            className="stat-card stat-card-interactive"
+            onClick={handleOpenSavingsModal}
+            title="Click to customize savings rate"
+          >
             <div className="stat-card-header">
-              <span className="stat-label">Savings Rate</span>
+              <div className="stat-label-row">
+                <span className="stat-label">Savings Rate</span>
+                {savingsConfig.isCustom && (
+                  <span className="stat-badge-custom">Custom</span>
+                )}
+                <button
+                  type="button"
+                  className="btn-stat-edit"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenSavingsModal();
+                  }}
+                  title="Customize savings rate and target"
+                  aria-label="Customize savings rate"
+                >
+                  <Pencil size={12} />
+                </button>
+              </div>
               <div className="stat-icon-circle icon-rate">
                 <Percent size={16} />
               </div>
             </div>
             <div className="stat-value text-ink">
-              {savingsRate}%
+              {displayedRate}%
             </div>
             <div className="stat-progress-bar">
               <div
                 className="progress-fill"
                 style={{
-                  width: `${Math.max(0, Math.min(100, savingsRate))}%`,
-                  backgroundColor: savingsRate >= 20 ? 'var(--status-green)' : 'var(--signal-orange)',
+                  width: `${Math.max(0, Math.min(100, displayedRate))}%`,
+                  backgroundColor: displayedRate >= targetRate ? 'var(--status-green)' : 'var(--signal-orange)',
                 }}
               />
             </div>
             <div className="stat-footer-text">
-              {savingsRate >= 20 ? 'Target achieved (≥ 20%)' : 'Below 20% savings benchmark'}
+              {displayedRate >= targetRate
+                ? `Target achieved (≥ ${targetRate}%)`
+                : `Below ${targetRate}% savings benchmark`}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Savings Rate & Target Customization Modal */}
+      {savingsModalOpen && (
+        <div className="modal-overlay" onClick={() => setSavingsModalOpen(false)} role="dialog" aria-modal="true">
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <div>
+                <div className="eyebrow">
+                  <span className="eyebrow-dot" />
+                  <span>FINANCIAL GOALS</span>
+                </div>
+                <h2 className="modal-title">Customize Savings Rate</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setSavingsModalOpen(false)}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSavings} className="modal-form mt-16">
+              <div className="form-group">
+                <label className="form-label" htmlFor="cfg-target-benchmark">
+                  Target Benchmark Goal (%)
+                </label>
+                <input
+                  id="cfg-target-benchmark"
+                  type="number"
+                  min="1"
+                  max="100"
+                  className="form-input"
+                  value={tempTarget}
+                  onChange={(e) => setTempTarget(e.target.value)}
+                  placeholder="Default: 20%"
+                  required
+                />
+                <span className="field-hint">
+                  The minimum monthly savings benchmark (default is 20%).
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Calculation Mode</label>
+                <div className="savings-mode-toggle" style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                  <button
+                    type="button"
+                    className={`btn-toggle-option ${!tempIsCustom ? 'active' : ''}`}
+                    onClick={() => setTempIsCustom(false)}
+                  >
+                    Auto ({autoSavingsRate}%)
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn-toggle-option ${tempIsCustom ? 'active' : ''}`}
+                    onClick={() => setTempIsCustom(true)}
+                  >
+                    Custom Rate
+                  </button>
+                </div>
+              </div>
+
+              {tempIsCustom && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="cfg-custom-rate">
+                    Custom Savings Rate (%)
+                  </label>
+                  <input
+                    id="cfg-custom-rate"
+                    type="number"
+                    min="-100"
+                    max="100"
+                    step="1"
+                    className="form-input"
+                    value={tempCustomRate}
+                    onChange={(e) => setTempCustomRate(e.target.value)}
+                    placeholder="e.g. 50"
+                    required
+                    autoFocus
+                  />
+                  <span className="field-hint">
+                    Enter your customized savings rate to display on the dashboard.
+                  </span>
+                </div>
+              )}
+
+              <div className="modal-actions mt-20">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setSavingsModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
